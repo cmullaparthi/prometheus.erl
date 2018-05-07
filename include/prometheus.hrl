@@ -4,6 +4,7 @@
 -define(PROMETHEUS_SUMMARY_TABLE, prometheus_summary_table).
 -define(PROMETHEUS_HISTOGRAM_TABLE, prometheus_histogram_table).
 -define(PROMETHEUS_BOOLEAN_TABLE, prometheus_boolean_table).
+-define(PROMETHEUS_LABEL_MAP_TABLE, prometheus_label_map_table).
 
 -define(PROMETHEUS_COUNTER_DEFAULT, 0).
 

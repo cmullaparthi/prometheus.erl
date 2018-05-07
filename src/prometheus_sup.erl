@@ -50,7 +50,8 @@ create_tables() ->
             {?PROMETHEUS_GAUGE_TABLE, write_concurrency},
             {?PROMETHEUS_SUMMARY_TABLE, write_concurrency},
             {?PROMETHEUS_HISTOGRAM_TABLE, write_concurrency},
-            {?PROMETHEUS_BOOLEAN_TABLE, write_concurrency}
+            {?PROMETHEUS_BOOLEAN_TABLE, write_concurrency},
+            {?PROMETHEUS_LABEL_MAP_TABLE, write_concurrency}
            ],
   [maybe_create_table(Name, Concurrency) || {Name, Concurrency} <- Tables],
   ok.

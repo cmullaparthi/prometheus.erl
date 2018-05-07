@@ -222,9 +222,7 @@ remove(Name, LabelValues) ->
 %% @end
 remove(Registry, Name, LabelValues) ->
   prometheus_metric:check_mf_exists(?TABLE, Registry, Name, LabelValues),
-  case lists:flatten([ets:take(?TABLE,
-                               {Registry, Name, LabelValues, Scheduler})
-                      || Scheduler <- schedulers_seq()]) of
+  case ets:take(?TABLE, {Registry, Name, labels_to_hash(LabelValues)}) of
     [] -> false;
     _ -> true
   end.
@@ -247,10 +245,8 @@ reset(Name, LabelValues) ->
 %% @end
 reset(Registry, Name, LabelValues) ->
   prometheus_metric:check_mf_exists(?TABLE, Registry, Name, LabelValues),
-  case lists:usort([ets:update_element(?TABLE,
-                                       {Registry, Name, LabelValues, Scheduler},
-                                       [{?ISUM_POS, 0}, {?FSUM_POS, 0}])
-                    || Scheduler <- schedulers_seq()]) of
+  case ets:update_element(?TABLE, {Registry, Name, labels_to_hash(LabelValues)},
+                          [{?ISUM_POS, 0}, {?FSUM_POS, 0}]) of
     [_, _] -> true;
     [true] -> true;
     _ -> false
@@ -275,7 +271,7 @@ value(Name, LabelValues) ->
 %% @end
 value(Registry, Name, LabelValues) ->
   prometheus_metric:check_mf_exists(?TABLE, Registry, Name, LabelValues),
-  case ets:select(?TABLE, [{{{Registry, Name, LabelValues, '_'}, '$1', '$2'},
+  case ets:select(?TABLE, [{{{Registry, Name, labels_to_hash(LabelValues)}, '$1', '$2'},
                             [],
                             [{'+', '$1', '$2'}]}]) of
     [] -> undefined;
@@ -288,11 +284,7 @@ values(Registry, Name) ->
     MF ->
       Labels = prometheus_metric:mf_labels(MF),
       MFValues = load_all_values(Registry, Name),
-      [begin
-         Value = reduce_label_values(LabelValues, MFValues),
-         {lists:zip(Labels, LabelValues), Value}
-       end ||
-        LabelValues <- collect_unique_labels(MFValues)]
+      [{lists:zip(Labels, LabelValues), I + F} || [LabelValues, I, F] <- MFValues]
   end.
 
 %%====================================================================
@@ -302,7 +294,7 @@ values(Registry, Name) ->
 %% @private
 deregister_cleanup(Registry) ->
   prometheus_metric:deregister_mf(?TABLE, Registry),
-  true = ets:match_delete(?TABLE, {{Registry, '_', '_', '_'}, '_', '_'}),
+  true = ets:match_delete(?TABLE, {{Registry, '_', '_'}, '_', '_'}),
   ok.
 
 %% @private
@@ -316,18 +308,17 @@ collect_mf(Registry, Callback) ->
 collect_metrics(Name, {CLabels, Labels, Registry}) ->
   MFValues = load_all_values(Registry, Name),
   [begin
-     Value = reduce_label_values(LabelValues, MFValues),
      prometheus_model_helpers:counter_metric(
-       CLabels ++ lists:zip(Labels, LabelValues), Value)
+       CLabels ++ lists:zip(Labels, LabelValues), I + F)
    end ||
-    LabelValues <- collect_unique_labels(MFValues)].
+    [LabelValues, I, F] <- MFValues].
 
 %%====================================================================
 %% Private Parts
 %%====================================================================
 
 deregister_select(Registry, Name) ->
-  [{{{Registry, Name, '_', '_'}, '_', '_'}, [], [true]}].
+  [{{{Registry, Name, '_'}, '_', '_'}, [], [true]}].
 
 insert_metric(Registry, Name, LabelValues, Value, ConflictCB) ->
   prometheus_metric:check_mf_exists(?TABLE, Registry, Name, LabelValues),
@@ -340,21 +331,21 @@ insert_metric(Registry, Name, LabelValues, Value, ConflictCB) ->
   end.
 
 load_all_values(Registry, Name) ->
-   ets:match(?TABLE, {{Registry, Name, '$1', '_'}, '$2', '$3'}).
-
-schedulers_seq() ->
-  lists:seq(0, ?WIDTH-1).
+  [[hash_to_labels(LabelsHash), I, F] || 
+    {{XReg, XName, LabelsHash}, I, F} <- ets:tab2list(?TABLE),
+    XReg == Registry, XName == Name].
 
 key(Registry, Name, LabelValues) ->
-  X = erlang:system_info(scheduler_id),
-  Rnd = X band (?WIDTH-1),
-  {Registry, Name, LabelValues, Rnd}.
-
-collect_unique_labels(MFValues) ->
-  lists:usort([L || [L, _, _] <- MFValues]).
-
-reduce_label_values(Labels, MFValues) ->
-  lists:sum([I + F || [L, I, F] <- MFValues, L == Labels]).
+  LabelValuesHash = labels_to_hash(LabelValues),
+  ets:insert_new(?PROMETHEUS_LABEL_MAP_TABLE, {LabelValuesHash, LabelValues}),
+  {Registry, Name, LabelValuesHash}.
 
 create_counter(Name, Help, Data) ->
   prometheus_model_helpers:create_mf(Name, Help, counter, ?MODULE, Data).
+
+hash_to_labels(HashValue) ->
+  [{_, Labels}] = ets:lookup(?PROMETHEUS_LABEL_MAP_TABLE, HashValue),
+  Labels.
+
+labels_to_hash(Labels) ->
+  erlang:phash2(Labels, 4294967296).
